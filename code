@@ -1,0 +1,206 @@
+%说明：本设计的功能：输入拨号音的音频，通过判别不同频率识别号码数字。显示出来
+      %缺点或可改进之处：1、在判别号码音是通过幅值检测高于0.008，可以改为自适应。
+                      % 2、可以设计成GUI版本，有输入输出框显示，人机交互更和谐。 
+                      %一些变量、数组使用不够规范，代码整洁度不够，整体结构的问题，以及思路上的问题，都可以进一步优化。谢谢提出宝贵意见~
+       %运行前，请先配置加载fdatool两个FIR滤波器：Hd，Hd1.分别是带通570，670，1500，1600。带阻950,1000，1100，1150
+                
+%%可以改进之处制作一个GUI    guide
+close all;
+clear global Q
+clear global P
+clear global t1
+%
+% Record your voice for 6 seconds.   参考0
+recObj = audiorecorder;  %默认创建 8000 Hz、8 位、1 通道的 audiorecorder 对象。
+disp('Start speaking.')
+recordblocking(recObj, 6);   %保存6秒   第二版，改成gui版本，可设置按钮
+disp('End of Recording.');
+% Play back the recording.
+play(recObj);
+
+% Store data in double-precision array.
+myRecording = getaudiodata(recObj);
+
+filename = 'audio\your_number.wav'; %创建文件 create the audio file
+audiowrite(filename,myRecording,8000); %写入内容 write the content into the file
+%}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%除了存储音频后，再调用。当然直接调用刚录好的音频，可能也是一条思路
+folder='I:\matlab2016a\bin\audio\'; %folder address
+file=dir([folder '*.wav']);         %此处可以读取多个音频文件  参考1
+file=[folder file.name];   
+try 
+    [y,Fs]=audioread(file);         %Fs为8000
+catch
+    warning('No suppot for the format.未发现文件')
+end
+
+%播放原始拨号音sound和wavplay
+sound(y,Fs);%
+%显示原始拨键音幅值
+figure(1)
+subplot(4,1,1);
+plot(y);
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%这一段是画 短时傅里叶变换频谱图 的通用程序
+fs=Fs;
+N=length(y); %numh
+n=0:N-1; t=n/fs;
+x=y;         %numh
+y1=fft(x,N);
+mag=abs(y1);
+f=n*fs/N;
+subplot(4,1,2),plot(f,mag);
+xlim([0,2500]);
+xlabel('Frenquency/Hz');
+ylabel('Amp');grid on;
+
+%%%%%%%%%%%%%%%%%利用能量的概念，求出某一段的能量比较大，说明那一段有时间
+[b,a]=tf(Hd);%得到传递函数   设计滤波器Hd为巴特沃斯带通滤波器，500Hz，600Hz,1700Hz,1800Hz fdatool
+d=filter(b,a,x);  %数据滤波
+[b,a]=tf(Hd1);%得到传递函数   设计滤波器 fdatool
+d=filter(b,a,d);
+subplot(4,1,3);
+plot(d);
+title('原始信号滤波后');
+xlabel('t');
+ylabel('d');
+grid on;
+
+%%%%%%%%%%%%%%滤波后的频谱
+fs=Fs;
+y2=d;
+N=length(y2); %numh
+n=0:N-1;
+t=n/fs;
+x=y2; %numh
+y1=fft(x,N);
+mag=abs(y1);
+f=n*fs/N;
+subplot(4,1,4);
+plot(f,mag);
+xlim([0,2500]);
+xlabel('Frenquency/Hz');
+ylabel('Amp');
+grid on;
+
+global Q;
+
+m=d;               %将过滤的数据重新赋值
+temp=m;
+global P;
+%
+P(1)=0;
+for i = 1 : 100     %这里直令电话号码为11位，后期优化，自动识别输入号码个数。
+    num=find(abs(temp) >= 0.008);     %0.008环境噪声和人生的阈值分割值，和系统有关（有待改进），有数据决定  参考2
+    if isempty(num)==1 
+        break; 
+    end
+    if i==1 
+        Q(i)=num(1);
+    else
+        Q(i)=num(1)+Q(i-1)+1800;      %重新获取音频的未检测出来的音频，相当于截去已知的音频部分。检测剩余的频分所含有的号码音。
+    end
+    temp=m((Q(i)+1800):N);
+end
+P(1)=i-1;
+% clear global Q;
+%}
+
+global t1;
+k=0;
+%%%% 对每一段数据进行 短时FFT
+figure;
+for i = 1:P(1)
+fs=Fs;
+k=k+1;
+if (Q(i)+1400) > 48000  %如果超出存储区域，就不在检测拨号音
+    break;
+end
+y3=d(Q(i)-50:Q(i)+1300);     %注意按键持续时间。包含在1500长度的关系
+N=length(y3)+200; %numh,fft长度多+200
+n=0:N-1;
+t=n/fs;
+x=y3; %numh
+y4=fft(x,N);
+mag1=abs(y4);
+f=n*fs/N;
+sum1(i)=sum(mag1.^2);
+ 
+if sum(mag1.^2)<= 20;
+    k=k-1;
+    continue;
+end
+num10= 126.01+find ( mag1(128:194)  == max(mag1(128:194)));       %找到低频部分的峰值横坐标126=650/（fs/N）;   194=1000/（fs/N）
+num20= 193.8+find ( mag1(195:287)  == max(mag1(195:287)));     %找到高频部分的峰值横坐标 316=1485/（fs/N）
+    num1=num10*fs/N;   %横坐标转换成对应的频率
+    num2=num20*fs/N;   
+        
+    if(689<=num1 && num1<=705)   %上下范围是8
+         row=1;
+    elseif (778>=num1 && num1>=762) 
+         row=2;
+    elseif (845<=num1 && num1<=860)
+         row=3;
+    elseif (933<=num1 && num1<=949)
+         row=4;
+    else
+        k=k-1;
+        continue;
+    end 
+    
+    if(1201<num2 && num2<1217) 
+       column=1;
+    elseif (1344>=num2 && num2>=1328) 
+       column=2;
+    elseif (1469<=num2 && num2<=1485)  
+       column=3;
+    elseif (1625<=num2 && num2<=1641)
+        column=4;
+    else
+        k=k-1;
+        continue;   
+    end 
+    
+ subplot(fix(P(1)/4)+1,4,k);%
+
+
+ plot(f,mag1);
+ xlim([500,2500])
+ xlabel('Frenquency/Hz');
+ ylabel('Amp');grid on;
+
+ if  row==1 && column == 1   %进行行列的电话号码的判别。
+         tel = 1;
+     elseif row==1 && column == 2
+         tel = 2;
+     elseif row==1 && column == 3
+         tel = 3;
+     elseif row==2 && column == 1
+         tel = 4;
+     elseif row==2 && column == 2
+         tel = 5;
+     elseif row==2 && column == 3
+         tel = 6;
+     elseif row==3 && column == 1
+         tel = 7;
+     elseif row==3 && column == 2
+         tel = 8; 
+     elseif row==3 && column == 3
+         tel = 9;
+     elseif row==4 && column == 2
+         tel = 0;  
+     elseif row==4 && column == 3
+         tel = '#'; 
+     elseif row==4 && column == 1
+         tel = '*';     
+     else break;
+ end 
+t1(k)=tel;
+end
+disp('您所拨打的电话号码是：');
+disp(t1);
+
+%参考0 blog： https://ww2.mathworks.cn/help/matlab/ref/audiorecorder.html;jsessionid=d7ce1aa184bb7506b07ecde67dcb
+%参考1 blog： https://www.cnblogs.com/ksw2024/p/4488412.html
+%参考2 blog： https://blog.csdn.net/zhouyusong/article/details/8916729
